@@ -1,0 +1,9 @@
+{
+  "dataset": "msmarco",
+  "source": "https://huggingface.co/datasets/microsoft/ms_marco/resolve/main/v1.1/validation-00000-of-00001.parquet",
+  "source_sha256": "67aca2e1b2fffe418a6bd317142887c90973c9c98dd8d940eaae3f8521daed7c",
+  "records": 1000,
+  "passage_char_limit": null,
+  "selection": "first records in source order",
+  "paper_exact_sample": false
+}

@@ -31,3 +31,11 @@ wheels/
 */profiles
 */ray_worker
 .mypy_cache/
+
+# Reproduction runtime data; scripts/configuration remain versioned.
+.runtime/
+baselines/Ayo/
+.venv-herasys-baselines/
+results/
+data/raw/
+archive/pre_herasys_20260922/

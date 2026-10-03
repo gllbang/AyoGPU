@@ -1,0 +1,9 @@
+{
+  "dataset": "truthfulqa",
+  "source": "https://raw.githubusercontent.com/sylinrl/TruthfulQA/main/TruthfulQA.csv",
+  "source_sha256": "b8d8ef1e12f98b4f2a9f47abc9765da0640b182b6c5d9b92f0c1a1f2f1e02e5c",
+  "records": 790,
+  "passage_char_limit": 400,
+  "selection": "first records in source order",
+  "paper_exact_sample": false
+}

@@ -5,12 +5,12 @@ from typing import Any, List
 
 import ray
 
-from Ayo.app import APP
-from Ayo.configs.config import EngineConfig
-from Ayo.dags.dag import DAG
-from Ayo.dags.node import Node, NodeAnnotation, NodeIOSchema, NodeType
-from Ayo.engines.engine_types import ENGINE_REGISTRY, EngineType
-from Ayo.queries.query import Query
+from HeraSys.app import APP
+from HeraSys.configs.config import EngineConfig
+from HeraSys.dags.dag import DAG
+from HeraSys.dags.node import Node, NodeAnnotation, NodeIOSchema, NodeType
+from HeraSys.engines.engine_types import ENGINE_REGISTRY, EngineType
+from HeraSys.queries.query import Query
 
 # Create engine config, using the default config of ENGINE_REGISTRY
 default_embed_config = ENGINE_REGISTRY.get_default_config(EngineType.EMBEDDER)

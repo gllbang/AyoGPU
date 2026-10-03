@@ -1,11 +1,11 @@
 import time
 
-from Ayo.dags.dag import DAG
-from Ayo.modules.indexing import IndexingModule
-from Ayo.modules.searching import SearchingModule
-from Ayo.opt_pass.pruning_dependency import PruningDependencyPass
-from Ayo.opt_pass.stage_decomposition import StageDecompositionPass
-from Ayo.vis.vis_graph import visualize_dag_with_node_types
+from HeraSys.dags.dag import DAG
+from HeraSys.modules.indexing import IndexingModule
+from HeraSys.modules.searching import SearchingModule
+from HeraSys.opt_pass.pruning_dependency import PruningDependencyPass
+from HeraSys.opt_pass.stage_decomposition import StageDecompositionPass
+from HeraSys.vis.vis_graph import visualize_dag_with_node_types
 
 indexing_module = IndexingModule()
 searching_module = SearchingModule()

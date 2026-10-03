@@ -3,12 +3,12 @@ import traceback
 from copy import deepcopy
 from typing import Any, Dict, List, Union
 
-from Ayo.app import APP
-from Ayo.configs.config import EngineConfig
-from Ayo.dags.dag import DAG
-from Ayo.dags.node import Node, NodeAnnotation, NodeIOSchema, NodeOps, NodeType
-from Ayo.engines.engine_types import ENGINE_REGISTRY, EngineType
-from Ayo.queries.query import Query
+from HeraSys.app import APP
+from HeraSys.configs.config import EngineConfig
+from HeraSys.dags.dag import DAG
+from HeraSys.dags.node import Node, NodeAnnotation, NodeIOSchema, NodeOps, NodeType
+from HeraSys.engines.engine_types import ENGINE_REGISTRY, EngineType
+from HeraSys.queries.query import Query
 
 # Create embedding engine config
 default_embed_config = ENGINE_REGISTRY.get_default_config(EngineType.EMBEDDER)
@@ -311,7 +311,7 @@ async def cleanup(app: APP) -> None:
 
 
 if __name__ == "__main__":
-    from Ayo.vis.vis_graph import visualize_dag_with_node_types
+    from HeraSys.vis.vis_graph import visualize_dag_with_node_types
 
     dag = create_base_dag()
 
@@ -322,8 +322,8 @@ if __name__ == "__main__":
     )
 
     # optimize DAG
-    from Ayo.opt_pass.pruning_dependency import PruningDependencyPass
-    from Ayo.opt_pass.stage_decomposition import StageDecompositionPass
+    from HeraSys.opt_pass.pruning_dependency import PruningDependencyPass
+    from HeraSys.opt_pass.stage_decomposition import StageDecompositionPass
 
     dag.optimize([PruningDependencyPass(), StageDecompositionPass()])
 

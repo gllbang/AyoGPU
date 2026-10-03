@@ -4,17 +4,17 @@ import traceback
 import uuid
 from copy import deepcopy
 
-from Ayo.app import APP
-from Ayo.configs.config import EngineConfig
-from Ayo.dags.dag import DAG
-from Ayo.dags.node import Node, NodeAnnotation, NodeIOSchema, NodeOps, NodeType
-from Ayo.engines.engine_types import ENGINE_REGISTRY, EngineType
-from Ayo.opt_pass.decoding_pipeling import LLMDecodingPipeliningPass
-from Ayo.opt_pass.prefilling_split import PrefillingSpiltPass
-from Ayo.opt_pass.pruning_dependency import PruningDependencyPass
-from Ayo.opt_pass.stage_decomposition import StageDecompositionPass
-from Ayo.queries.query import Query
-from Ayo.utils import print_key_info
+from HeraSys.app import APP
+from HeraSys.configs.config import EngineConfig
+from HeraSys.dags.dag import DAG
+from HeraSys.dags.node import Node, NodeAnnotation, NodeIOSchema, NodeOps, NodeType
+from HeraSys.engines.engine_types import ENGINE_REGISTRY, EngineType
+from HeraSys.opt_pass.decoding_pipeling import LLMDecodingPipeliningPass
+from HeraSys.opt_pass.prefilling_split import PrefillingSpiltPass
+from HeraSys.opt_pass.pruning_dependency import PruningDependencyPass
+from HeraSys.opt_pass.stage_decomposition import StageDecompositionPass
+from HeraSys.queries.query import Query
+from HeraSys.utils import print_key_info
 
 # Create LLM engine configuration
 default_llm_config = ENGINE_REGISTRY.get_default_config(EngineType.LLM)
@@ -233,7 +233,7 @@ async def cleanup(app):
 if __name__ == "__main__":
     import os
 
-    from Ayo.vis.vis_graph import visualize_dag_with_node_types
+    from HeraSys.vis.vis_graph import visualize_dag_with_node_types
 
     # Create DAG
     dag = create_base_dag()

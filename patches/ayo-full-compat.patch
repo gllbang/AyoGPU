@@ -1,0 +1,322 @@
+diff --git a/Ayo/engines/embedder.py b/Ayo/engines/embedder.py
+index c8c662b..4c988dc 100644
+--- a/Ayo/engines/embedder.py
++++ b/Ayo/engines/embedder.py
+@@ -12,6 +12,32 @@ from Ayo.logger import GLOBAL_INFO_LEVEL, get_logger
+ logger = get_logger(__name__, level=GLOBAL_INFO_LEVEL)
+ 
+ 
++async def collect_fifo(engine, size):
++    """Optional bounded batching; preserve requests and overflow order."""
++    pending = getattr(engine, "benchmark_pending", None)
++    first = pending if pending is not None else await engine.request_queue.get()
++    engine.benchmark_pending = None
++    batch, used = [first], size(first)
++    deadline = time.perf_counter() + engine.benchmark_batch_wait_s
++    while used < engine.max_batch_size:
++        if not engine.request_queue.empty():
++            request = engine.request_queue.get_nowait()
++        else:
++            remaining = deadline - time.perf_counter()
++            if remaining <= 0:
++                break
++            try:
++                request = await asyncio.wait_for(engine.request_queue.get(), remaining)
++            except asyncio.TimeoutError:
++                break
++        if used + size(request) > engine.max_batch_size:
++            engine.benchmark_pending = request
++            break
++        batch.append(request)
++        used += size(request)
++    return batch
++
++
+ @dataclass
+ class EmbeddingRequest:
+     """Data class for embedding requests"""
+@@ -55,6 +81,8 @@ class EmbeddingEngine:
+         self.device = device
+ 
+         self.name = kwargs.get("name", None)
++        torch.set_num_threads(2)
++        self.benchmark_batch_wait_s = kwargs.get("benchmark_batch_wait_s")
+ 
+         # Initialize model
+         self.model = self._load_model()
+@@ -200,6 +228,9 @@ class EmbeddingEngine:
+ 
+     async def _get_next_batch(self) -> Tuple[List[EmbeddingRequest], List[str]]:
+         """Get next batch of requests to process"""
++        if self.benchmark_batch_wait_s is not None:
++            batch = await collect_fifo(self, lambda r: len(r.texts))
++            return batch, [text for request in batch for text in request.texts]
+         batch_requests = []
+         batch_texts = []
+         processed_queries = set()
+@@ -243,7 +274,8 @@ class EmbeddingEngine:
+ 
+             batch_size = len(texts) if isinstance(texts, list) else 1
+             embeddings = self.model.encode(
+-                texts, batch_size=batch_size, show_progress_bar=False
++                texts, batch_size=min(64, batch_size), show_progress_bar=False,
++                normalize_embeddings=True,
+             )
+             # embeddings = embeddings[:,:768]
+ 
+diff --git a/Ayo/engines/llm.py b/Ayo/engines/llm.py
+index eda7dfc..5f8d06c 100644
+--- a/Ayo/engines/llm.py
++++ b/Ayo/engines/llm.py
+@@ -60,6 +60,18 @@ class LLMEngine:
+ 
+         self.name = kwargs.get("name", None)
+ 
++        # Process-local compatibility for the pinned Ayo vLLM build; no package upgrade.
++        import importlib.util
++        import os
++
++        compat_spec = importlib.util.spec_from_file_location(
++            "ayo_full_vllm_compat", os.environ["AYO_FULL_VLLM_COMPAT"]
++        )
++        compat = importlib.util.module_from_spec(compat_spec)
++        compat_spec.loader.exec_module(compat)
++        compat.install()
++        torch.set_num_threads(2)
++
+         # initialize the vLLM asynchronous engine
+         engine_args = AsyncEngineArgs(
+             model=model_name,
+@@ -68,6 +80,11 @@ class LLMEngine:
+             dtype=dtype,
+             max_num_seqs=max_num_seqs,
+             engine_use_ray=False,
++            max_model_len=kwargs.get("max_model_len", 1664),
++            gpu_memory_utilization=kwargs.get("gpu_memory_utilization", 0.88),
++            max_num_batched_tokens=kwargs.get("max_num_batched_tokens", 8192),
++            swap_space=0,
++            disable_log_stats=True,
+         )
+ 
+         print(f"Initializing vLLM engine with model: {model_name}")
+@@ -98,6 +115,14 @@ class LLMEngine:
+         """Check if the engine is ready"""
+         return True
+ 
++    def resource_state(self):
++        manager = self.engine.engine.scheduler.block_manager
++        return {
++            "kv_free_blocks": manager.get_num_free_gpu_blocks(),
++            "kv_total_blocks": self.engine.engine.cache_config.num_gpu_blocks,
++            "unfinished": self.engine.engine.has_unfinished_requests(),
++        }
++
+     async def submit_request(
+         self,
+         request_id: str,
+@@ -264,6 +289,8 @@ class LLMEngine:
+                             self.query_requests[request.query_id].remove(request)
+                             if not self.query_requests[request.query_id]:
+                                 del self.query_requests[request.query_id]
++                        self.result_generator_tracker.pop(request.llm_internal_id, None)
++                        self.query_requests.pop(request.query_id, None)
+ 
+             elif request.llm_op_type == NodeOps.LLM_PARTIAL_DECODING:
+                 # Ensure the state dictionary exists
+diff --git a/Ayo/engines/payload_transformers.py b/Ayo/engines/payload_transformers.py
+index 2c387bb..7e3e814 100644
+--- a/Ayo/engines/payload_transformers.py
++++ b/Ayo/engines/payload_transformers.py
+@@ -269,6 +269,8 @@ class EmbedderTransformer(PayloadTransformer):
+ 
+         logger.debug(f"Transform the input for embedder, texts: {texts}")
+ 
++        if node.config.get("role") == "query":
++            texts = ["Represent this sentence for searching relevant passages: " + t for t in texts]
+         return {"texts": texts}
+ 
+ 
+@@ -523,6 +525,13 @@ class LLMTransformer(PayloadTransformer):
+ 
+         # prepare the prompt for the LLM
+ 
++        if node.config.get("benchmark_prompt") and node.op_type == NodeOps.LLM_PREFILLING:
++            passages = node.input_kwargs[node.config["context_port"]]
++            context = "\n".join(
++                p.get("text", p.get("passage", "")) if isinstance(p, dict) else p
++                for p in passages
++            )
++            prompt = "Context: " + context + "\nQuestion: " + node.input_kwargs["query"] + "\nAnswer:"
+         max_tokens = node.config.get("max_tokens", 150)
+         llm_op_type = node.op_type
+ 
+@@ -533,8 +542,8 @@ class LLMTransformer(PayloadTransformer):
+ 
+         # FIXME: this sampling_params is not used for decoding-related operations
+         sampling_params = SamplingParams(
+-            temperature=0.9,
+-            top_p=0.95,
++            temperature=node.config.get("temperature", 0.9),
++            top_p=node.config.get("top_p", 0.95),
+             max_tokens=max_tokens,
+             support_partial_output=support_partial_output,
+             support_partial_prefilling=support_partial_prefilling,
+diff --git a/Ayo/engines/reranker.py b/Ayo/engines/reranker.py
+index f7880ef..e0301dc 100644
+--- a/Ayo/engines/reranker.py
++++ b/Ayo/engines/reranker.py
+@@ -52,6 +52,8 @@ class RerankerEngine:
+         self.batch_strategy = batch_strategy  # add new parameter: "request" or "pair"
+ 
+         self.name = kwargs.get("name", None)
++        torch.set_num_threads(2)
++        self.benchmark_batch_wait_s = kwargs.get("benchmark_batch_wait_s")
+ 
+         # Initialize model
+         self.model = self._load_model()
+@@ -80,8 +82,8 @@ class RerankerEngine:
+         """Load the reranker model"""
+         from sentence_transformers import CrossEncoder
+ 
+-        model = CrossEncoder(model_name=self.model_name, device=self.device)
+-        model.model.half()
++        model = CrossEncoder(model_name=self.model_name, device=self.device, max_length=512)
++        model.model.float()
+ 
+         res = model.predict(["hello", "world"])  # Warm up
+         print(res)
+@@ -170,7 +172,9 @@ class RerankerEngine:
+                             scores = self.model.predict(
+                                 sub_batch,
+                                 convert_to_numpy=True,
+-                                batch_size=self.max_batch_size,
++                                batch_size=min(32, self.max_batch_size),
++                                activation_fct=torch.nn.Identity(),
++                                show_progress_bar=False,
+                             )
+                             end_time = time.time()
+                             logger.debug(
+@@ -263,6 +267,11 @@ class RerankerEngine:
+         self,
+     ) -> Tuple[List[RerankerRequest], Tuple[List[str], List[List[str]]]]:
+         """Get the next batch of requests to process - process one request at a time"""
++        if self.benchmark_batch_wait_s is not None:
++            from Ayo.engines.embedder import collect_fifo
++
++            batch = await collect_fifo(self, lambda r: len(r.passages))
++            return batch, ([r.query_text for r in batch], [r.passages for r in batch])
+         # TODO: Support batch multiple requests at a time
+         batch_requests = []
+         batch_queries = []
+diff --git a/Ayo/engines/vector_db.py b/Ayo/engines/vector_db.py
+index c1bb262..7ed3fb0 100644
+--- a/Ayo/engines/vector_db.py
++++ b/Ayo/engines/vector_db.py
+@@ -88,22 +88,28 @@ class VectorDBEngine:
+         # Start processing tasks
+         self.running = True
+         self.tasks = []
+-        asyncio.create_task(self._initialize())
++        self.initialization = asyncio.create_task(self._initialize())
+ 
+         self.scheduler_ref = scheduler_ref
+ 
+-    def is_ready(self):
++    async def is_ready(self):
+         """Check if the engine is ready"""
++        await self.initialization
+         return True
+ 
+     async def _initialize(self):
+         """Initialize database connection and start processing tasks"""
+         # Create connection pool
+-        self.pool = await asyncpg.create_pool(**self.db_config)
++        self.pool = await asyncpg.create_pool(
++            **self.db_config,
++            init=register_vector,
++            server_settings={"search_path": "ayo_full_reproduction,public"},
++        )
+ 
+         # Register vector type with asyncpg
+         async with self.pool.acquire() as conn:
+             await register_vector(conn)
++            await conn.execute("CREATE SCHEMA IF NOT EXISTS ayo_full_reproduction")
+ 
+         # Start processing tasks
+         self.tasks = [
+@@ -377,7 +383,7 @@ class VectorDBEngine:
+                             f"""
+                             SELECT text, embedding <=> $1 as distance
+                             FROM {table_name}
+-                            ORDER BY embedding <=> $1
++                            ORDER BY embedding <=> $1, id
+                             LIMIT $2
+                             """,
+                             query_vector.tolist(),
+diff --git a/Ayo/schedulers/engine_scheduler.py b/Ayo/schedulers/engine_scheduler.py
+index 17641d6..1bb2d09 100644
+--- a/Ayo/schedulers/engine_scheduler.py
++++ b/Ayo/schedulers/engine_scheduler.py
+@@ -101,6 +101,7 @@ class EngineScheduler(BaseEngineScheduler):
+ 
+         # initialize current engine index
+         self.current_engine_idx = 0
++        self.session_engines = {}
+ 
+         self.pending_requests: Dict[str, EngineRequest] = {}
+ 
+@@ -209,7 +210,12 @@ class EngineScheduler(BaseEngineScheduler):
+                 logger.info(f"Processing request: {request.request_id}")
+ 
+                 # get available engine
+-                engine = self._get_next_engine()
++                session = request.payload.get("llm_internal_id")
++                engine = self.session_engines.get(session) if session else None
++                if engine is None:
++                    engine = self._get_next_engine()
++                    if session:
++                        self.session_engines[session] = engine
+ 
+                 logger.info(
+                     f"submit request {request.request_id} with payload: {request.payload.keys()}"
+@@ -304,6 +310,8 @@ class EngineScheduler(BaseEngineScheduler):
+             if request_id in self.pending_requests:
+                 request = self.pending_requests[request_id]
+                 request.result_ref = result_ref_from_engine
++                if request.payload.get("llm_op_type") == "llm_decoding":
++                    self.session_engines.pop(request.payload.get("llm_internal_id"), None)
+ 
+                 # put completed request into complete queue
+                 await self.complete_queue.put(request)
+@@ -355,3 +363,6 @@ class EngineScheduler(BaseEngineScheduler):
+             return False
+ 
+         return self._is_ready
++
++    def engine_handles(self):
++        return self.engines
+diff --git a/Ayo/schedulers/graph_scheduler.py b/Ayo/schedulers/graph_scheduler.py
+index 67f0bad..3670b76 100644
+--- a/Ayo/schedulers/graph_scheduler.py
++++ b/Ayo/schedulers/graph_scheduler.py
+@@ -491,8 +491,19 @@ class GraphScheduler:
+             runner = self.query_runners[query_id]
+             await runner.cleanup_runtime_context()
+ 
++    async def forget_query(self, query_id):
++        # APP must observe COMPLETED before the runner/status entry is removed.
++        await self.cleanup_query(query_id)
++        self.query_runners.pop(query_id, None)
++
++    def diagnostic(self, query_id):
++        runner = self.query_runners.get(query_id)
++        if runner is None:
++            return {"missing": True}
++        return {n.name: {"status": n.status.value, "error": n.error_message} for n in runner.dag.nodes}
++
+     async def shutdown(self):
+         """Shutdown the graph scheduler"""
+-        for query_id, runner in self.query_runners.items():
++        for query_id in list(self.query_runners):
+             await self.cleanup_query(query_id)
+         self.query_runners = {}

@@ -4,13 +4,13 @@ import uuid
 from copy import deepcopy
 from typing import List, Union
 
-from Ayo.app import APP
-from Ayo.configs.config import EngineConfig
-from Ayo.dags.dag import DAG
-from Ayo.dags.node import Node, NodeAnnotation, NodeIOSchema, NodeOps, NodeType
-from Ayo.engines.engine_types import ENGINE_REGISTRY, EngineType
-from Ayo.modules.prompt_template import replace_placeholders
-from Ayo.queries.query import Query
+from HeraSys.app import APP
+from HeraSys.configs.config import EngineConfig
+from HeraSys.dags.dag import DAG
+from HeraSys.dags.node import Node, NodeAnnotation, NodeIOSchema, NodeOps, NodeType
+from HeraSys.engines.engine_types import ENGINE_REGISTRY, EngineType
+from HeraSys.modules.prompt_template import replace_placeholders
+from HeraSys.queries.query import Query
 
 # Create embedding engine config
 default_embed_config = ENGINE_REGISTRY.get_default_config(EngineType.EMBEDDER)
@@ -127,7 +127,7 @@ def create_base_dag():
         config={},
     )
 
-    from Ayo.modules.prompt_template import (
+    from HeraSys.modules.prompt_template import (
         QUERY_EXPANDING_PROMPT_TEMPLATE_STRING,
         RAG_QUESTION_ANSWERING_PROMPT_TEMPLATE_STRING,
     )
@@ -472,7 +472,7 @@ async def cleanup(app):
 
 
 if __name__ == "__main__":
-    from Ayo.vis.vis_graph import visualize_dag_with_compute_nodes_in_line
+    from HeraSys.vis.vis_graph import visualize_dag_with_compute_nodes_in_line
 
     dag = create_base_dag()
 
